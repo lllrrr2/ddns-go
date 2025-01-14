@@ -6,7 +6,7 @@ package update
 import (
 	"fmt"
 
-	"github.com/jeessy2/ddns-go/v5/util"
+	"github.com/jeessy2/ddns-go/v6/util"
 )
 
 type Release struct {
@@ -41,8 +41,9 @@ func getLatest(repo string) (*Release, error) {
 	}
 
 	var result ReleaseResp
-	err = util.GetHTTPResponse(resp, u, err, &result)
+	err = util.GetHTTPResponse(resp, err, &result)
 	if err != nil {
+		util.Log("异常信息: %s", err)
 		return nil, err
 	}
 

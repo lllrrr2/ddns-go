@@ -2,12 +2,11 @@ package dns
 
 import (
 	"io"
-	"log"
 	"net/http"
 	"strings"
 
-	"github.com/jeessy2/ddns-go/v5/config"
-	"github.com/jeessy2/ddns-go/v5/util"
+	"github.com/jeessy2/ddns-go/v6/config"
+	"github.com/jeessy2/ddns-go/v6/util"
 )
 
 const (
@@ -56,52 +55,49 @@ func (nc *NameCheap) addUpdateDomainRecords(recordType string) {
 	// 防止多次发送Webhook通知
 	if recordType == "A" {
 		if nc.lastIpv4 == ipAddr {
-			log.Println("你的IPv4未变化, 未触发Namecheap请求")
+			util.Log("你的IPv4未变化, 未触发 %s 请求", "NameCheap")
 			return
 		}
 	} else {
 		// https://www.namecheap.com/support/knowledgebase/article.aspx/29/11/how-to-dynamically-update-the-hosts-ip-with-an-http-request/
-		log.Println("Namecheap DDNS 不支持更新 IPv6！")
+		util.Log("Namecheap 不支持更新 IPv6")
 		return
-		// if nc.lastIpv6 == ipAddr {
-		// 	log.Println("你的IPv6未变化, 未触发Namecheap请求")
-		// 	return
-		// }
 	}
 
 	for _, domain := range domains {
-		nc.modify(domain, recordType, ipAddr)
+		nc.modify(domain, ipAddr)
 	}
 }
 
 // 修改
-func (nc *NameCheap) modify(domain *config.Domain, recordType string, ipAddr string) {
+func (nc *NameCheap) modify(domain *config.Domain, ipAddr string) {
 	var result NameCheapResp
 	err := nc.request(&result, ipAddr, domain)
 
 	if err != nil {
-		log.Printf("修改域名解析 %s 失败！", domain)
+		util.Log("更新域名解析 %s 失败! 异常信息: %s", domain, err)
 		domain.UpdateStatus = config.UpdatedFailed
 		return
 	}
 
 	switch result.Status {
 	case "Success":
-		log.Printf("修改域名解析 %s 成功！IP: %s\n", domain, ipAddr)
+		util.Log("更新域名解析 %s 成功! IP: %s", domain, ipAddr)
 		domain.UpdateStatus = config.UpdatedSuccess
 	default:
-		log.Printf("修改域名解析 %s 失败！Status: %s\n", domain, result.Status)
+		util.Log("更新域名解析 %s 失败! 异常信息: %s", domain, result.Status)
 		domain.UpdateStatus = config.UpdatedFailed
 	}
 }
 
 // request 统一请求接口
 func (nc *NameCheap) request(result *NameCheapResp, ipAddr string, domain *config.Domain) (err error) {
-	var url string = nameCheapEndpoint
-	url = strings.ReplaceAll(url, "#{host}", domain.GetSubDomain())
-	url = strings.ReplaceAll(url, "#{domain}", domain.DomainName)
-	url = strings.ReplaceAll(url, "#{password}", nc.DNS.Secret)
-	url = strings.ReplaceAll(url, "#{ip}", ipAddr)
+	url := strings.NewReplacer(
+		"#{host}", domain.GetSubDomain(),
+		"#{domain}", domain.DomainName,
+		"#{password}", nc.DNS.Secret,
+		"#{ip}", ipAddr,
+	).Replace(nameCheapEndpoint)
 
 	req, err := http.NewRequest(
 		http.MethodGet,
@@ -110,21 +106,18 @@ func (nc *NameCheap) request(result *NameCheapResp, ipAddr string, domain *confi
 	)
 
 	if err != nil {
-		log.Println("http.NewRequest失败. Error: ", err)
 		return
 	}
 
 	client := util.CreateHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Println("client.Do失败. Error: ", err)
 		return
 	}
 
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Println("请求namecheap失败")
 		return err
 	}
 

@@ -25,7 +25,7 @@ jobs:
           go-version-file: 'go.mod'
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v5
+        uses: goreleaser/goreleaser-action@v6
         if: startsWith(github.ref, 'refs/tags/')
         with:
           distribution: goreleaser
@@ -56,4 +56,4 @@ jobs:
         with:
           # Custom GitHub access token with only the 'workflow' scope enabled
           token: ${{ secrets.HOMEBREW_COMMITTER_TOKEN }}
-          formulae: ddns-go ivaquero/chinese/ddns-go
+          formulae: ddns-go

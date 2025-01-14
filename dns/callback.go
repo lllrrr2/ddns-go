@@ -2,13 +2,13 @@ package dns
 
 import (
 	"encoding/json"
-	"log"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 
-	"github.com/jeessy2/ddns-go/v5/config"
-	"github.com/jeessy2/ddns-go/v5/util"
+	"github.com/jeessy2/ddns-go/v6/config"
+	"github.com/jeessy2/ddns-go/v6/util"
 )
 
 type Callback struct {
@@ -53,12 +53,12 @@ func (cb *Callback) addUpdateDomainRecords(recordType string) {
 	// 防止多次发送Webhook通知
 	if recordType == "A" {
 		if cb.lastIpv4 == ipAddr {
-			log.Println("你的IPv4未变化, 未触发Callback")
+			util.Log("你的IPv4未变化, 未触发 %s 请求", "Callback")
 			return
 		}
 	} else {
 		if cb.lastIpv6 == ipAddr {
-			log.Println("你的IPv6未变化, 未触发Callback")
+			util.Log("你的IPv6未变化, 未触发 %s 请求", "Callback")
 			return
 		}
 	}
@@ -77,41 +77,54 @@ func (cb *Callback) addUpdateDomainRecords(recordType string) {
 		requestURL := replacePara(cb.DNS.ID, ipAddr, domain, recordType, cb.TTL)
 		u, err := url.Parse(requestURL)
 		if err != nil {
-			log.Println("Callback的URL不正确")
+			util.Log("Callback的URL不正确")
 			return
 		}
 		req, err := http.NewRequest(method, u.String(), strings.NewReader(postPara))
 		if err != nil {
-			log.Println("创建Callback请求异常, Err:", err)
+			util.Log("异常信息: %s", err)
+			domain.UpdateStatus = config.UpdatedFailed
 			return
 		}
 		req.Header.Add("content-type", contentType)
 
 		clt := util.CreateHTTPClient()
 		resp, err := clt.Do(req)
-		body, err := util.GetHTTPResponseOrg(resp, requestURL, err)
+		body, err := util.GetHTTPResponseOrg(resp, err)
 		if err == nil {
-			log.Printf("Callback调用成功, 域名: %s, IP: %s, 返回数据: %s, \n", domain, ipAddr, string(body))
+			util.Log("Callback调用成功, 域名: %s, IP: %s, 返回数据: %s", domain, ipAddr, string(body))
 			domain.UpdateStatus = config.UpdatedSuccess
 		} else {
-			log.Printf("Callback调用失败，Err：%s\n", err)
+			util.Log("Callback调用失败, 异常信息: %s", err)
 			domain.UpdateStatus = config.UpdatedFailed
 		}
 	}
 }
 
 // replacePara 替换参数
-func replacePara(orgPara, ipAddr string, domain *config.Domain, recordType string, ttl string) (newPara string) {
-	orgPara = strings.ReplaceAll(orgPara, "#{ip}", ipAddr)
-	orgPara = strings.ReplaceAll(orgPara, "#{domain}", domain.String())
-	orgPara = strings.ReplaceAll(orgPara, "#{recordType}", recordType)
-	orgPara = strings.ReplaceAll(orgPara, "#{ttl}", ttl)
+func replacePara(orgPara, ipAddr string, domain *config.Domain, recordType string, ttl string) string {
+	// params 使用 map 以便添加更多参数
+	params := map[string]string{
+		"ip":         ipAddr,
+		"domain":     domain.String(),
+		"recordType": recordType,
+		"ttl":        ttl,
+	}
 
+	// 也替换域名的自定义参数
 	for k, v := range domain.GetCustomParams() {
 		if len(v) == 1 {
-			orgPara = strings.ReplaceAll(orgPara, "#{"+k+"}", v[0])
+			params[k] = v[0]
 		}
 	}
 
-	return orgPara
+	// 将 map 转换为 [NewReplacer] 所需的参数
+	// map 中的每个元素占用 2 个位置（kv），因此需要预留 2 倍的空间
+	oldnew := make([]string, 0, len(params)*2)
+	for k, v := range params {
+		k = fmt.Sprintf("#{%s}", k)
+		oldnew = append(oldnew, k, v)
+	}
+
+	return strings.NewReplacer(oldnew...).Replace(orgPara)
 }
