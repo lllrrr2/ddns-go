@@ -28,11 +28,6 @@ func IsPrivateNetwork(remoteAddr string) bool {
 			ip.IsLinkLocalUnicast() // 169.254/16, fe80::/10
 	}
 
-	// localhost
-	if remoteAddr == "localhost" {
-		return true
-	}
-
 	return false
 }
 

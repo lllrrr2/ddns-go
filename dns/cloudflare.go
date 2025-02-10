@@ -4,17 +4,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 
-	"github.com/jeessy2/ddns-go/v5/config"
-	"github.com/jeessy2/ddns-go/v5/util"
+	"github.com/jeessy2/ddns-go/v6/config"
+	"github.com/jeessy2/ddns-go/v6/util"
 )
 
-const (
-	zonesAPI string = "https://api.cloudflare.com/client/v4/zones"
-)
+const zonesAPI = "https://api.cloudflare.com/client/v4/zones"
 
 // Cloudflare Cloudflare实现
 type Cloudflare struct {
@@ -48,6 +47,7 @@ type CloudflareRecord struct {
 	Content string `json:"content"`
 	Proxied bool   `json:"proxied"`
 	TTL     int    `json:"ttl"`
+	Comment string `json:"comment"`
 }
 
 // CloudflareStatus 公共状态
@@ -92,28 +92,57 @@ func (cf *Cloudflare) addUpdateDomainRecords(recordType string) {
 	for _, domain := range domains {
 		// get zone
 		result, err := cf.getZones(domain)
-		if err != nil || len(result.Result) != 1 {
+
+		if err != nil {
+			util.Log("查询域名信息发生异常! %s", err)
 			domain.UpdateStatus = config.UpdatedFailed
 			return
 		}
+
+		if len(result.Result) == 0 {
+			util.Log("在DNS服务商中未找到根域名: %s", domain.DomainName)
+			domain.UpdateStatus = config.UpdatedFailed
+			return
+		}
+
+		params := url.Values{}
+		params.Set("type", recordType)
+		// The name of DNS records in Cloudflare API expects Punycode.
+		//
+		// See: cloudflare/cloudflare-go#690
+		params.Set("name", domain.ToASCII())
+		params.Set("per_page", "50")
+		// Add a comment only if it exists
+		if c := domain.GetCustomParams().Get("comment"); c != "" {
+			params.Set("comment", c)
+		}
+
 		zoneID := result.Result[0].ID
 
 		var records CloudflareRecordsResp
 		// getDomains 最多更新前50条
 		err = cf.request(
 			"GET",
-			fmt.Sprintf(zonesAPI+"/%s/dns_records?type=%s&name=%s&per_page=50", zoneID, recordType, domain),
+			fmt.Sprintf(zonesAPI+"/%s/dns_records?%s", zoneID, params.Encode()),
 			nil,
 			&records,
 		)
 
-		if err != nil || !records.Success {
+		if err != nil {
+			util.Log("查询域名信息发生异常! %s", err)
+			domain.UpdateStatus = config.UpdatedFailed
+			return
+		}
+
+		if !records.Success {
+			util.Log("查询域名信息发生异常! %s", strings.Join(records.Messages, ", "))
+			domain.UpdateStatus = config.UpdatedFailed
 			return
 		}
 
 		if len(records.Result) > 0 {
 			// 更新
-			cf.modify(records, zoneID, domain, recordType, ipAddr)
+			cf.modify(records, zoneID, domain, ipAddr)
 		} else {
 			// 新增
 			cf.create(zoneID, domain, recordType, ipAddr)
@@ -125,10 +154,11 @@ func (cf *Cloudflare) addUpdateDomainRecords(recordType string) {
 func (cf *Cloudflare) create(zoneID string, domain *config.Domain, recordType string, ipAddr string) {
 	record := &CloudflareRecord{
 		Type:    recordType,
-		Name:    domain.String(),
+		Name:    domain.ToASCII(),
 		Content: ipAddr,
 		Proxied: false,
 		TTL:     cf.TTL,
+		Comment: domain.GetCustomParams().Get("comment"),
 	}
 	record.Proxied = domain.GetCustomParams().Get("proxied") == "true"
 	var status CloudflareStatus
@@ -138,21 +168,28 @@ func (cf *Cloudflare) create(zoneID string, domain *config.Domain, recordType st
 		record,
 		&status,
 	)
-	if err == nil && status.Success {
-		log.Printf("新增域名解析 %s 成功！IP: %s", domain, ipAddr)
+
+	if err != nil {
+		util.Log("新增域名解析 %s 失败! 异常信息: %s", domain, err)
+		domain.UpdateStatus = config.UpdatedFailed
+		return
+	}
+
+	if status.Success {
+		util.Log("新增域名解析 %s 成功! IP: %s", domain, ipAddr)
 		domain.UpdateStatus = config.UpdatedSuccess
 	} else {
-		log.Printf("新增域名解析 %s 失败！Messages: %s", domain, status.Messages)
+		util.Log("新增域名解析 %s 失败! 异常信息: %s", domain, strings.Join(status.Messages, ", "))
 		domain.UpdateStatus = config.UpdatedFailed
 	}
 }
 
 // 修改
-func (cf *Cloudflare) modify(result CloudflareRecordsResp, zoneID string, domain *config.Domain, recordType string, ipAddr string) {
+func (cf *Cloudflare) modify(result CloudflareRecordsResp, zoneID string, domain *config.Domain, ipAddr string) {
 	for _, record := range result.Result {
 		// 相同不修改
 		if record.Content == ipAddr {
-			log.Printf("你的IP %s 没有变化, 域名 %s", ipAddr, domain)
+			util.Log("你的IP %s 没有变化, 域名 %s", ipAddr, domain)
 			continue
 		}
 		var status CloudflareStatus
@@ -168,11 +205,18 @@ func (cf *Cloudflare) modify(result CloudflareRecordsResp, zoneID string, domain
 			record,
 			&status,
 		)
-		if err == nil && status.Success {
-			log.Printf("更新域名解析 %s 成功！IP: %s", domain, ipAddr)
+
+		if err != nil {
+			util.Log("更新域名解析 %s 失败! 异常信息: %s", domain, err)
+			domain.UpdateStatus = config.UpdatedFailed
+			return
+		}
+
+		if status.Success {
+			util.Log("更新域名解析 %s 成功! IP: %s", domain, ipAddr)
 			domain.UpdateStatus = config.UpdatedSuccess
 		} else {
-			log.Printf("更新域名解析 %s 失败！Messages: %s", domain, status.Messages)
+			util.Log("更新域名解析 %s 失败! 异常信息: %s", domain, strings.Join(status.Messages, ", "))
 			domain.UpdateStatus = config.UpdatedFailed
 		}
 	}
@@ -180,9 +224,14 @@ func (cf *Cloudflare) modify(result CloudflareRecordsResp, zoneID string, domain
 
 // 获得域名记录列表
 func (cf *Cloudflare) getZones(domain *config.Domain) (result CloudflareZonesResp, err error) {
+	params := url.Values{}
+	params.Set("name", domain.DomainName)
+	params.Set("status", "active")
+	params.Set("per_page", "50")
+
 	err = cf.request(
 		"GET",
-		fmt.Sprintf(zonesAPI+"?name=%s&status=%s&per_page=%s", domain.DomainName, "active", "50"),
+		fmt.Sprintf(zonesAPI+"?%s", params.Encode()),
 		nil,
 		&result,
 	)
@@ -202,7 +251,6 @@ func (cf *Cloudflare) request(method string, url string, data interface{}, resul
 		bytes.NewBuffer(jsonStr),
 	)
 	if err != nil {
-		log.Println("http.NewRequest失败. Error: ", err)
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+cf.DNS.Secret)
@@ -210,7 +258,7 @@ func (cf *Cloudflare) request(method string, url string, data interface{}, resul
 
 	client := util.CreateHTTPClient()
 	resp, err := client.Do(req)
-	err = util.GetHTTPResponse(resp, url, err, result)
+	err = util.GetHTTPResponse(resp, err, result)
 
 	return
 }

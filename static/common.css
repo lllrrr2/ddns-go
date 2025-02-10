@@ -146,11 +146,11 @@ main {
     margin-right: 25px;
 }
 
-[data-theme='dark'] .theme-button:hover {
+.theme-button:hover {
     box-shadow: 0px 0px 15px #0d0d0dab;
 }
 
-[data-theme='dark'] .theme-button:active {
+.theme-button:active {
     transform: scale(0.98);
 }
 
@@ -226,6 +226,51 @@ main {
     margin-right: 8px;
     line-height: 0;
     text-align: center;
-    vertical-align: text-bottom;
     font-size: 16px;
+}
+
+.badge {
+    margin-right: 20px; /* 给版本号添加右侧间距 */
+}
+.button-container{
+    padding:0 !important;
+}
+
+.action-button {
+    flex:none;
+    padding:4px 6px;
+    font-size: 14px;
+    color: white;
+    border: 1px solid white;
+    border-radius: 8px;
+    background-color: transparent;
+    text-align: center;
+    text-decoration: none;
+}
+
+.action-button:hover,
+.action-button:visited,
+.action-button:active,
+.action-button:focus {
+    color: white;
+    border-color: white;
+    background-color: transparent;
+    text-decoration: none;
+    outline: none;
+}
+
+.tooltip[x-placement^="top"] .arrow, .tooltip[x-placement^="bottom"] .arrow {
+    left: 50%;
+}
+
+.tooltip[x-placement^="left"] .arrow, .tooltip[x-placement^="right"] .arrow {
+    top: 50%;
+}
+
+.tooltip[x-placement^="top"] .arrow::before, .tooltip[x-placement^="bottom"] .arrow::before {
+    transform: translateX(-50%);
+}
+
+.tooltip[x-placement^="left"] .arrow::before, .tooltip[x-placement^="right"] .arrow::before {
+    transform: translateY(-50%);
 }

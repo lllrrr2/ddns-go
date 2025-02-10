@@ -3,12 +3,11 @@ package dns
 import (
 	"encoding/xml"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 
-	"github.com/jeessy2/ddns-go/v5/config"
-	"github.com/jeessy2/ddns-go/v5/util"
+	"github.com/jeessy2/ddns-go/v6/config"
+	"github.com/jeessy2/ddns-go/v6/util"
 )
 
 const (
@@ -97,7 +96,7 @@ func (ns *NameSilo) addUpdateDomainRecords(recordType string) {
 		// 拿到DNS记录列表，从列表中去取对应域名的id，有id进行修改，没ID进行新增
 		records, err := ns.listRecords(domain)
 		if err != nil {
-			log.Printf("获取域名列表 %s 失败！", domain)
+			util.Log("查询域名信息发生异常! %s", err)
 			domain.UpdateStatus = config.UpdatedFailed
 			return
 		}
@@ -110,8 +109,8 @@ func (ns *NameSilo) addUpdateDomainRecords(recordType string) {
 		} else {
 			recordID = record.RecordID
 			if record.Value == ipAddr {
-				log.Printf("你的IP %s 没有变化, 域名 %s", ipAddr, domain)
-				return
+				util.Log("你的IP %s 没有变化, 域名 %s", ipAddr, domain)
+				continue
 			}
 		}
 		ns.modify(domain, recordID, recordType, ipAddr, isAdd)
@@ -127,44 +126,49 @@ func (ns *NameSilo) modify(domain *config.Domain, recordID, recordType, ipAddr s
 		requestType = "新增"
 		result, err = ns.request(ipAddr, domain, "", recordType, nameSiloAddRecordEndpoint)
 	} else {
-		requestType = "修改"
+		requestType = "更新"
 		result, err = ns.request(ipAddr, domain, recordID, "", nameSiloUpdateRecordEndpoint)
 	}
 	if err != nil {
-		log.Printf("修改域名解析 %s 失败！", domain)
+		util.Log("异常信息: %s", err)
 		domain.UpdateStatus = config.UpdatedFailed
 		return
 	}
 	var resp NameSiloResp
 	xml.Unmarshal([]byte(result), &resp)
 	if resp.Reply.Code == 300 {
-		log.Printf("%s 域名解析 %s 成功！IP: %s\n", requestType, domain, ipAddr)
+		util.Log(requestType+"域名解析 %s 成功! IP: %s\n", domain, ipAddr)
 		domain.UpdateStatus = config.UpdatedSuccess
 	} else {
-		log.Printf("%s 域名解析 %s 失败！Deatil: %s\n", requestType, domain, resp.Reply.Detail)
+		util.Log(requestType+"域名解析 %s 失败! 异常信息: %s", domain, resp.Reply.Detail)
 		domain.UpdateStatus = config.UpdatedFailed
 	}
 }
 
-func (ns *NameSilo) listRecords(domain *config.Domain) (resp NameSiloDNSListRecordResp, err error) {
-	//lint:ignore SA4006 false positive
+func (ns *NameSilo) listRecords(domain *config.Domain) (*NameSiloDNSListRecordResp, error) {
 	result, err := ns.request("", domain, "", "", nameSiloListRecordEndpoint)
-	err = xml.Unmarshal([]byte(result), &resp)
-	return
+	if err != nil {
+		return nil, err
+	}
+
+	var resp NameSiloDNSListRecordResp
+	if err = xml.Unmarshal([]byte(result), &resp); err != nil {
+		return nil, err
+	}
+
+	return &resp, nil
 }
 
 // request 统一请求接口
 func (ns *NameSilo) request(ipAddr string, domain *config.Domain, recordID, recordType, url string) (result string, err error) {
-	if domain.SubDomain == "@" {
-		url = strings.ReplaceAll(url, "#{host}", "")
-	} else {
-		url = strings.ReplaceAll(url, "#{host}", domain.SubDomain)
-	}
-	url = strings.ReplaceAll(url, "#{domain}", domain.DomainName)
-	url = strings.ReplaceAll(url, "#{password}", ns.DNS.Secret)
-	url = strings.ReplaceAll(url, "#{recordID}", recordID)
-	url = strings.ReplaceAll(url, "#{recordType}", recordType)
-	url = strings.ReplaceAll(url, "#{ip}", ipAddr)
+	url = strings.NewReplacer(
+		"#{host}", domain.SubDomain,
+		"#{domain}", domain.DomainName,
+		"#{password}", ns.DNS.Secret,
+		"#{recordID}", recordID,
+		"#{recordType}", recordType,
+		"#{ip}", ipAddr,
+	).Replace(url)
 	req, err := http.NewRequest(
 		http.MethodGet,
 		url,
@@ -172,14 +176,12 @@ func (ns *NameSilo) request(ipAddr string, domain *config.Domain, recordID, reco
 	)
 
 	if err != nil {
-		log.Println("http.NewRequest失败. Error: ", err)
 		return
 	}
 
 	client := util.CreateHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Println("client.Do失败. Error: ", err)
 		return
 	}
 
